@@ -1,0 +1,21 @@
+# UI
+streamlit==1.35.0
+
+# LLM + RAG
+langchain==0.2.6
+langchain-community==0.2.6
+langchain-ollama==0.1.1
+ollama==0.3.3
+
+# Vector store
+chromadb==0.5.3
+
+# Document parsing
+pymupdf==1.24.5
+python-docx==1.1.2
+openpyxl==3.1.4
+
+# Utilities
+python-dotenv==1.0.1
+pydantic==2.7.4
+tqdm==4.66.4

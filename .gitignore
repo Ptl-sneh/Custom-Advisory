@@ -1,0 +1,67 @@
+# Virtual environment
+venv/
+.venv/
+env/
+
+# Environment variables
+.env
+
+# Vector store (ChromaDB - can be rebuilt from raw docs)
+vector_store/
+
+# Processed chunks (auto-generated)
+data/processed/
+
+# Raw documents (confidential - never commit)
+data/raw/
+
+# Review store (local state)
+review/review_store.json
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg
+*.egg-info/
+dist/
+build/
+eggs/
+parts/
+var/
+sdist/
+develop-eggs/
+.installed.cfg
+lib/
+lib64/
+
+# Streamlit
+.streamlit/secrets.toml
+
+# Jupyter (if used for experimentation)
+.ipynb_checkpoints/
+*.ipynb
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Logs
+*.log
+logs/
+
+# Temp files
+*.tmp
+*.temp
