@@ -9,13 +9,13 @@ from langchain.prompts import PromptTemplate
 from config import LLM_MODEL, CONFIDENCE_THRESHOLD
 from rag.retriever import retrieve, RetrievalResult
 from schemas.advisory import AdvisoryQuery, AdvisoryResponse, SourceReference
-from schemas.common import ReviewStatus
+from schemas.comon import ReviewStatus
 from logger import get_logger
 
 logger = get_logger(__name__)
 
 
-# ── Prompt template ────────────────────────────────────────────────────────────
+# Prompt template
 ADVISORY_PROMPT = PromptTemplate(
     input_variables=["query", "context", "source_list"],
     template="""
@@ -51,7 +51,7 @@ RISK_FLAGS:
 
 CONFIDENCE_NOTE:
 <Brief note on how well the sources cover this query. Mention if sources are limited or conflicting.>
-"""
+""",
 )
 
 
@@ -61,7 +61,7 @@ def _build_context(chunks: list[SourceReference]) -> tuple[str, str]:
     Returns (context_text, source_list_text)
     """
     context_parts = []
-    source_set    = {}
+    source_set = {}
 
     for i, chunk in enumerate(chunks, start=1):
         context_parts.append(
@@ -73,9 +73,7 @@ def _build_context(chunks: list[SourceReference]) -> tuple[str, str]:
         source_set[chunk.doc_id] = chunk.source_name
 
     context_text = "\n\n---\n\n".join(context_parts)
-    source_list  = "\n".join(
-        f"- {name}" for name in source_set.values()
-    )
+    source_list = "\n".join(f"- {name}" for name in source_set.values())
 
     return context_text, source_list
 
@@ -86,16 +84,16 @@ def _parse_llm_response(raw_response: str) -> dict:
     Extracts each section by its label.
     """
     sections = {
-        "SHORT_ANSWER":    "",
-        "CLASSIFICATION":  "",
-        "REASONING":       "",
+        "SHORT_ANSWER": "",
+        "CLASSIFICATION": "",
+        "REASONING": "",
         "ALTERNATE_VIEWS": "",
-        "RISK_FLAGS":      "",
+        "RISK_FLAGS": "",
         "CONFIDENCE_NOTE": "",
     }
 
     current_section = None
-    lines           = raw_response.strip().split("\n")
+    lines = raw_response.strip().split("\n")
 
     for line in lines:
         stripped = line.strip()
@@ -106,7 +104,7 @@ def _parse_llm_response(raw_response: str) -> dict:
             if stripped.startswith(f"{key}:"):
                 current_section = key
                 # Capture inline content after the colon if any
-                inline = stripped[len(key) + 1:].strip()
+                inline = stripped[len(key) + 1 :].strip()
                 if inline:
                     sections[key] = inline
                 matched = True
@@ -140,7 +138,7 @@ def _extract_risk_flags(risk_text: str) -> list[str]:
 
 def _calculate_confidence(
     retrieval: RetrievalResult,
-    parsed:    dict,
+    parsed: dict,
 ) -> float:
     """
     Final confidence score combining:
@@ -151,16 +149,14 @@ def _calculate_confidence(
 
     # Completeness: penalize if key sections are empty or N/A
     filled_sections = sum(
-        1 for key in ["SHORT_ANSWER", "REASONING", "CLASSIFICATION"]
+        1
+        for key in ["SHORT_ANSWER", "REASONING", "CLASSIFICATION"]
         if parsed.get(key, "").strip()
         and parsed.get(key, "").upper() not in ("N/A", "NONE", "")
     )
     completeness_score = filled_sections / 3
 
-    final_score = round(
-        (retrieval_score * 0.7) + (completeness_score * 0.3),
-        4
-    )
+    final_score = round((retrieval_score * 0.7) + (completeness_score * 0.3), 4)
 
     logger.debug(
         f"Confidence breakdown | retrieval={retrieval_score} | "
@@ -179,45 +175,47 @@ def generate_advisory(query_obj: AdvisoryQuery) -> AdvisoryResponse:
     logger.info(f"Advisory generation started | session_id={session_id}")
 
     try:
-        # ── Step 1: Retrieve relevant chunks ──────────────────────────────
+        # Step 1: Retrieve relevant chunks
         logger.info(f"[1/3] Retrieving chunks | session_id={session_id}")
         retrieval: RetrievalResult = retrieve(
-            query  = query_obj.query,
-            top_k  = query_obj.top_k,
+            query=query_obj.query,
+            top_k=query_obj.top_k,
         )
 
         if not retrieval.chunks:
             logger.info(f"No chunks retrieved | session_id={session_id}")
             raise ValueError("No relevant documents found for this query.")
 
-        # ── Step 2: Build prompt and call LLM ─────────────────────────────
+        # Step 2: Build prompt and call LLM
         logger.info(f"[2/3] Calling LLM | session_id={session_id} | model={LLM_MODEL}")
 
         context_text, source_list = _build_context(retrieval.chunks)
 
         prompt = ADVISORY_PROMPT.format(
-            query       = query_obj.query,
-            context     = context_text,
-            source_list = source_list,
+            query=query_obj.query,
+            context=context_text,
+            source_list=source_list,
         )
 
         try:
-            llm          = OllamaLLM(model=LLM_MODEL, temperature=0.1)
+            llm = OllamaLLM(model=LLM_MODEL, temperature=0.1)
             raw_response = llm.invoke(prompt)
             logger.debug(f"LLM response received | chars={len(raw_response)}")
         except Exception as e:
             logger.info(f"LLM call failed | session_id={session_id} | error={str(e)}")
             raise
 
-        # ── Step 3: Parse + structure response ────────────────────────────
+        # Step 3: Parse + structure response
         logger.info(f"[3/3] Parsing response | session_id={session_id}")
 
         try:
-            parsed     = _parse_llm_response(raw_response)
+            parsed = _parse_llm_response(raw_response)
             risk_flags = _extract_risk_flags(parsed.get("RISK_FLAGS", ""))
             confidence = _calculate_confidence(retrieval, parsed)
         except Exception as e:
-            logger.info(f"Response parsing failed | session_id={session_id} | error={str(e)}")
+            logger.info(
+                f"Response parsing failed | session_id={session_id} | error={str(e)}"
+            )
             raise
 
         human_review_required = (
@@ -233,20 +231,22 @@ def generate_advisory(query_obj: AdvisoryQuery) -> AdvisoryResponse:
         )
 
         return AdvisoryResponse(
-            session_id             = session_id,
-            query                  = query_obj.query,
-            short_answer           = parsed.get("SHORT_ANSWER", ""),
-            classification         = parsed.get("CLASSIFICATION") or None,
-            reasoning              = parsed.get("REASONING", ""),
-            alternate_views        = parsed.get("ALTERNATE_VIEWS") or None,
-            risk_flags             = risk_flags,
-            source_references      = retrieval.chunks,
-            confidence_score       = confidence,
-            human_review_required  = human_review_required,
-            review_status          = ReviewStatus.PENDING,
-            created_at             = datetime.utcnow(),
+            session_id=session_id,
+            query=query_obj.query,
+            short_answer=parsed.get("SHORT_ANSWER", ""),
+            classification=parsed.get("CLASSIFICATION") or None,
+            reasoning=parsed.get("REASONING", ""),
+            alternate_views=parsed.get("ALTERNATE_VIEWS") or None,
+            risk_flags=risk_flags,
+            source_references=retrieval.chunks,
+            confidence_score=confidence,
+            human_review_required=human_review_required,
+            review_status=ReviewStatus.PENDING,
+            created_at=datetime.utcnow(),
         )
 
     except Exception as e:
-        logger.info(f"Advisory generation failed | session_id={session_id} | error={str(e)}")
+        logger.info(
+            f"Advisory generation failed | session_id={session_id} | error={str(e)}"
+        )
         raise

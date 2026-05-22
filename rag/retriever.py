@@ -18,16 +18,16 @@ logger = get_logger(__name__)
 
 
 class RetrievalResult(BaseModel):
-    chunks:           list[SourceReference]
-    avg_confidence:   float
-    top_confidence:   float
-    is_confident:     bool
-    total_retrieved:  int
+    chunks: list[SourceReference]
+    avg_confidence: float
+    top_confidence: float
+    is_confident: bool
+    total_retrieved: int
 
 
 def retrieve(
-    query:   str,
-    top_k:   int = TOP_K,
+    query: str,
+    top_k: int = TOP_K,
     filters: Optional[dict] = None,
 ) -> RetrievalResult:
     """
@@ -37,7 +37,7 @@ def retrieve(
     logger.info(f"Retrieval started | query_len={len(query)} | top_k={top_k}")
 
     try:
-        # ── Embed the query ────────────────────────────────────────────────
+        # Embed the query
         embeddings_model = OllamaEmbeddings(model=EMBEDDING_MODEL)
 
         try:
@@ -47,15 +47,15 @@ def retrieve(
             logger.info(f"Query embedding failed | error={str(e)}")
             raise
 
-        # ── Query ChromaDB ─────────────────────────────────────────────────
+        # Query ChromaDB
         try:
-            client     = get_chroma_client()
+            client = get_chroma_client()
             collection = get_collection(client)
 
             query_params = {
                 "query_embeddings": [query_vector],
-                "n_results":        top_k,
-                "include":          ["documents", "metadatas", "distances"],
+                "n_results": top_k,
+                "include": ["documents", "metadatas", "distances"],
             }
 
             if filters:
@@ -68,11 +68,11 @@ def retrieve(
             logger.info(f"ChromaDB query failed | error={str(e)}")
             raise
 
-        # ── Parse results ──────────────────────────────────────────────────
-        chunks:      list[SourceReference] = []
-        confidences: list[float]           = []
+        # Parse results
+        chunks: list[SourceReference] = []
+        confidences: list[float] = []
 
-        ids       = results["ids"][0]
+        ids = results["ids"][0]
         documents = results["documents"][0]
         metadatas = results["metadatas"][0]
         distances = results["distances"][0]
@@ -92,21 +92,27 @@ def retrieve(
 
             page_num = meta.get("page_number", -1)
 
-            chunks.append(SourceReference(
-                doc_id           = meta.get("doc_id", ""),
-                source_name      = meta.get("source_name", ""),
-                doc_type         = meta.get("doc_type", ""),
-                reference_number = meta.get("reference_number") or None,
-                chunk_text       = doc_text,
-                page_number      = page_num if page_num != -1 else None,
-                similarity_score = similarity,
-            ))
+            chunks.append(
+                SourceReference(
+                    doc_id=meta.get("doc_id", ""),
+                    source_name=meta.get("source_name", ""),
+                    doc_type=meta.get("doc_type", ""),
+                    reference_number=meta.get("reference_number") or None,
+                    chunk_text=doc_text,
+                    page_number=page_num if page_num != -1 else None,
+                    similarity_score=similarity,
+                )
+            )
 
-            logger.debug(f"Chunk {i+1} | source={meta.get('source_name')} | score={similarity}")
+            logger.debug(
+                f"Chunk {i+1} | source={meta.get('source_name')} | score={similarity}"
+            )
 
-        avg_confidence = round(sum(confidences) / len(confidences), 4) if confidences else 0.0
+        avg_confidence = (
+            round(sum(confidences) / len(confidences), 4) if confidences else 0.0
+        )
         top_confidence = round(max(confidences), 4) if confidences else 0.0
-        is_confident   = top_confidence >= CONFIDENCE_THRESHOLD
+        is_confident = top_confidence >= CONFIDENCE_THRESHOLD
 
         logger.info(
             f"Retrieval complete | chunks={len(chunks)} | "
@@ -115,11 +121,11 @@ def retrieve(
         )
 
         return RetrievalResult(
-            chunks          = chunks,
-            avg_confidence  = avg_confidence,
-            top_confidence  = top_confidence,
-            is_confident    = is_confident,
-            total_retrieved = len(chunks),
+            chunks=chunks,
+            avg_confidence=avg_confidence,
+            top_confidence=top_confidence,
+            is_confident=is_confident,
+            total_retrieved=len(chunks),
         )
 
     except Exception as e:
