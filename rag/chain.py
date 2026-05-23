@@ -9,7 +9,7 @@ from langchain.prompts import PromptTemplate
 from config import LLM_MODEL, CONFIDENCE_THRESHOLD
 from rag.retriever import retrieve, RetrievalResult
 from schemas.advisory import AdvisoryQuery, AdvisoryResponse, SourceReference
-from schemas.comon import ReviewStatus
+from schemas.common import ReviewStatus
 from logger import get_logger
 
 logger = get_logger(__name__)
@@ -55,7 +55,7 @@ CONFIDENCE_NOTE:
 )
 
 
-def _build_context(chunks: list[SourceReference]) -> tuple[str, str]:
+def build_context(chunks: list[SourceReference]) -> tuple[str, str]:
     """
     Build context string and source list string from retrieved chunks.
     Returns (context_text, source_list_text)
@@ -78,7 +78,7 @@ def _build_context(chunks: list[SourceReference]) -> tuple[str, str]:
     return context_text, source_list
 
 
-def _parse_llm_response(raw_response: str) -> dict:
+def parse_llm_response(raw_response: str) -> dict:
     """
     Parse the structured LLM response into a dict.
     Extracts each section by its label.
@@ -122,7 +122,7 @@ def _parse_llm_response(raw_response: str) -> dict:
     return sections
 
 
-def _extract_risk_flags(risk_text: str) -> list[str]:
+def extract_risk_flags(risk_text: str) -> list[str]:
     """Convert risk flags text block into a clean list."""
     if not risk_text or risk_text.upper() == "NONE":
         return []
@@ -136,18 +136,39 @@ def _extract_risk_flags(risk_text: str) -> list[str]:
     return flags
 
 
-def _calculate_confidence(
+def calculate_confidence(
     retrieval: RetrievalResult,
     parsed: dict,
 ) -> float:
-    """
-    Final confidence score combining:
-    - Retrieval similarity (70% weight)
-    - Response completeness (30% weight)
-    """
-    retrieval_score = retrieval.avg_confidence
+    retrieval_score = retrieval.avg_confidence  # now honest (0.55–0.85 range)
 
-    # Completeness: penalize if key sections are empty or N/A
+    short_answer = parsed.get("SHORT_ANSWER", "").strip().lower()
+    reasoning    = parsed.get("REASONING",    "").strip().lower()
+
+    # ── Detect when LLM itself says "not in documents" ─────────────────────
+    not_found_phrases = [
+        "not specified", "not mentioned", "not provided", "not found",
+        "not contained", "no information", "cannot find", "does not contain",
+        "not present", "not available", "no mention",
+    ]
+    is_not_found = any(
+        phrase in short_answer or phrase in reasoning
+        for phrase in not_found_phrases
+    )
+
+    if is_not_found:
+        # Retrieval score is already low after the formula fix.
+        # Apply an additional penalty so it never crosses 0.85.
+        # Genuine customs queries on real chunks will score 0.85+,
+        # out-of-scope ones stay below 0.5.
+        final_score = round(retrieval_score * 0.5, 4)
+        logger.debug(
+            f"Confidence breakdown | retrieval={retrieval_score} | "
+            f"not_found=True | penalty=0.5x | final={final_score}"
+        )
+        return final_score
+
+    # ── Normal path: completeness only adds when answer is substantive ──────
     filled_sections = sum(
         1
         for key in ["SHORT_ANSWER", "REASONING", "CLASSIFICATION"]
@@ -156,7 +177,7 @@ def _calculate_confidence(
     )
     completeness_score = filled_sections / 3
 
-    final_score = round((retrieval_score * 0.7) + (completeness_score * 0.3), 4)
+    final_score = round((retrieval_score * 0.8) + (completeness_score * 0.2), 4)
 
     logger.debug(
         f"Confidence breakdown | retrieval={retrieval_score} | "
@@ -167,15 +188,11 @@ def _calculate_confidence(
 
 
 def generate_advisory(query_obj: AdvisoryQuery) -> AdvisoryResponse:
-    """
-    Main RAG chain entry point.
-    Retrieves relevant chunks and generates a structured advisory response.
-    """
     session_id = str(uuid.uuid4())
     logger.info(f"Advisory generation started | session_id={session_id}")
 
     try:
-        # Step 1: Retrieve relevant chunks
+        # Step 1: Retrieve
         logger.info(f"[1/3] Retrieving chunks | session_id={session_id}")
         retrieval: RetrievalResult = retrieve(
             query=query_obj.query,
@@ -183,14 +200,41 @@ def generate_advisory(query_obj: AdvisoryQuery) -> AdvisoryResponse:
         )
 
         if not retrieval.chunks:
-            logger.info(f"No chunks retrieved | session_id={session_id}")
             raise ValueError("No relevant documents found for this query.")
 
-        # Step 2: Build prompt and call LLM
+        # GATE: reject before LLM if retrieval is not confident
+        if not retrieval.is_confident:
+            logger.warning(
+                f"Out-of-scope query | session_id={session_id} | "
+                f"top_score={retrieval.top_confidence} | "
+                f"chunks_above_threshold={retrieval.chunks_above_threshold}"
+            )
+            return AdvisoryResponse(
+                session_id=session_id,
+                query=query_obj.query,
+                short_answer=(
+                    "The uploaded documents do not contain information "
+                    "relevant to this query."
+                ),
+                classification=None,
+                reasoning=(
+                    f"No document chunks met the relevance threshold. "
+                    f"Best match score was {retrieval.top_confidence:.4f}. "
+                    f"This query appears to be outside the scope of the "
+                    f"ingested documents."
+                ),
+                alternate_views=None,
+                risk_flags=["query_out_of_scope"],
+                source_references=[],
+                confidence_score=0.0,
+                human_review_required=True,
+                review_status=ReviewStatus.PENDING,
+                created_at=datetime.utcnow(),
+            )
+
+        # Step 2: LLM (only runs if gate passed)
         logger.info(f"[2/3] Calling LLM | session_id={session_id} | model={LLM_MODEL}")
-
-        context_text, source_list = _build_context(retrieval.chunks)
-
+        context_text, source_list = build_context(retrieval.chunks)
         prompt = ADVISORY_PROMPT.format(
             query=query_obj.query,
             context=context_text,
@@ -202,21 +246,14 @@ def generate_advisory(query_obj: AdvisoryQuery) -> AdvisoryResponse:
             raw_response = llm.invoke(prompt)
             logger.debug(f"LLM response received | chars={len(raw_response)}")
         except Exception as e:
-            logger.info(f"LLM call failed | session_id={session_id} | error={str(e)}")
+            logger.error(f"LLM call failed | session_id={session_id} | error={str(e)}")
             raise
 
-        # Step 3: Parse + structure response
+        # Step 3: Parse
         logger.info(f"[3/3] Parsing response | session_id={session_id}")
-
-        try:
-            parsed = _parse_llm_response(raw_response)
-            risk_flags = _extract_risk_flags(parsed.get("RISK_FLAGS", ""))
-            confidence = _calculate_confidence(retrieval, parsed)
-        except Exception as e:
-            logger.info(
-                f"Response parsing failed | session_id={session_id} | error={str(e)}"
-            )
-            raise
+        parsed = parse_llm_response(raw_response)
+        risk_flags = extract_risk_flags(parsed.get("RISK_FLAGS", ""))
+        confidence = calculate_confidence(retrieval, parsed)
 
         human_review_required = (
             confidence < CONFIDENCE_THRESHOLD
@@ -246,7 +283,7 @@ def generate_advisory(query_obj: AdvisoryQuery) -> AdvisoryResponse:
         )
 
     except Exception as e:
-        logger.info(
+        logger.error(
             f"Advisory generation failed | session_id={session_id} | error={str(e)}"
         )
         raise

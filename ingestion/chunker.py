@@ -1,3 +1,4 @@
+from pydantic import Field
 import re
 import uuid
 from typing import Optional
@@ -22,7 +23,7 @@ class DocumentChunk(BaseModel):
     issuing_authority: Optional[str] = None
     issue_date: Optional[str] = None
     reference_number: Optional[str] = None
-    tags: list[str] = []
+    tags: list[str] = Field(default_factory=list)
 
 
 def extract_page_number(text: str) -> Optional[int]:
@@ -44,7 +45,20 @@ def chunk_document(parsed_doc: ParsedDocument, doc_id: str) -> list[DocumentChun
             chunk_size=CHUNK_SIZE,
             chunk_overlap=CHUNK_OVERLAP,
             length_function=len,
-            separators=["\n\n", "\n", ". ", " ", ""],
+            # separators=["\n\n", "\n", ". ", " ", ""],
+            separators=[
+                "\nCHAPTER ",
+                "\nSECTION ",
+                "\nRule ",
+                "\nRULE ",
+                "\nNotification ",
+                "\nCircular ",
+                "\n\n",
+                "\n",
+                ". ",
+                " ",
+                "",
+            ],
         )
 
         raw_chunks = splitter.split_text(parsed_doc.raw_text)
@@ -65,6 +79,7 @@ def chunk_document(parsed_doc: ParsedDocument, doc_id: str) -> list[DocumentChun
 
             chunks.append(
                 DocumentChunk(
+                    filename=parsed_doc.filename,
                     chunk_id=str(uuid.uuid4()),  # fresh UUID per chunk
                     doc_id=doc_id,  # same for all chunks of this doc
                     chunk_index=idx,  # preserves original order

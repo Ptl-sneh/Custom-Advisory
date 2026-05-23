@@ -1,3 +1,4 @@
+from pydantic import Field
 import os
 import fitz
 import docx
@@ -22,7 +23,7 @@ class ParsedDocument(BaseModel):
     issuing_authority: Optional[str] = None
     issue_date: Optional[str] = None
     reference_number: Optional[str] = None
-    tags: list[str] = []
+    tags: list[str] = Field(default_factory=list)
 
 
 def parse_pdf(file_path: str) -> tuple[str, None]:
