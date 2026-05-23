@@ -12,7 +12,7 @@ REVIEW_STORE_PATH = os.path.join(BASE_DIR, "review", "review_store.json")
 
 # Ollama models
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "nomic-embed-text")
-LLM_MODEL = os.getenv("LLM_MODEL", "mistral")
+LLM_MODEL = os.getenv("LLM_MODEL", "qwen2.5")
 
 # Chunking
 CHUNK_SIZE = 500  # Each document is split into pieces of ~500 tokens/characters before being stored in ChromaDB.
@@ -21,7 +21,7 @@ CHUNK_OVERLAP = 80  # When splitting documents into chunks, this is the number o
 # Retrieval
 TOP_K = 6  # number of chunks to retrieve
 CONFIDENCE_THRESHOLD = 0.8  # below this → flag low confidence
-
+# MIN_CHUNKS_ABOVE_THRESHOLD = 1
 # Document types (for metadata tagging)
 DOC_TYPES = [
     "Circular",
