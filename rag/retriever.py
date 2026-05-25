@@ -37,8 +37,13 @@ from ingestion.embedder import get_chroma_client, get_collection, EmbeddingManag
 from rag.confidence_score import calculate_confidence, ConfidenceResult
 from schemas.advisory import SourceReference
 from logger import get_logger
+from .bm25_manager import BM25Manager
 
 logger = get_logger(__name__)
+
+
+bm25_manager = BM25Manager()
+bm25_manager.load_index()
 
 embedding_manager = EmbeddingManager()
 
@@ -167,6 +172,14 @@ def retrieve(
     """
     logger.info(f"Retrieval started | query_len={len(query)} | top_k={top_k}")
 
+    query_words = len(query.split())
+    if query_words <= 5:
+        top_k = 5
+    elif query_words <= 12:
+        top_k = 6
+    else:
+        top_k = 8
+
     try:
         # 1. Embed query
         prefixed_query = add_query_prefix(query)
@@ -175,7 +188,7 @@ def retrieve(
 
         # 2. Fetch candidates from ChromaDB
         # Fetch 2x top_k so MMR has candidates to choose from
-        fetch_k = (top_k * 2) if use_mmr else top_k
+        fetch_k = max(top_k * 4, 20) if use_mmr else top_k
 
         client = get_chroma_client()
         collection = get_collection(client)
@@ -233,11 +246,6 @@ def retrieve(
             meta = metadatas[idx]
             sim = similarities[idx]
 
-            try:
-                tags = json.loads(meta.get("tags", "[]"))
-            except Exception:
-                tags = []
-
             page_num = meta.get("page_number", -1)
 
             chunks.append(
@@ -252,6 +260,14 @@ def retrieve(
                 )
             )
             final_similarities.append(sim)
+
+            MIN_SIMILARITY = 0.45
+            filtered = [
+                (chunk, sim, doc)
+                for chunk, sim, doc in zip(chunks, final_similarities, final_doc_types)
+                if sim >= MIN_SIMILARITY
+            ]
+
             final_doc_types.append(meta.get("doc_type", "Other"))
 
             logger.debug(

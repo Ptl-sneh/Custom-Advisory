@@ -36,10 +36,10 @@ def get_logger(name: str) -> logging.Logger:
     console_handler.addFilter(max_filter)
 
     file_handler = RotatingFileHandler(
-        filename    = LOG_FILE,
-        maxBytes    = 5 * 1024 * 1024,
-        backupCount = 7,
-        encoding    = "utf-8",
+        filename=LOG_FILE,
+        maxBytes=5 * 1024 * 1024,
+        backupCount=7,
+        encoding="utf-8",
     )
     file_handler.setLevel(logging.DEBUG)
     file_handler.setFormatter(formatter)

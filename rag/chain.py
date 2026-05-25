@@ -39,6 +39,7 @@ from rag.retriever import retrieve, RetrievalResult
 from schemas.advisory import AdvisoryQuery, AdvisoryResponse, SourceReference
 from schemas.common import ReviewStatus
 from logger import get_logger
+import time
 
 logger = get_logger(__name__)
 
@@ -73,6 +74,22 @@ class LLMManager:
 
 
 llm_manager = LLMManager()
+
+# BAD_PATTERNS = ["ignore previous", "system prompt", "forget instructions", "override"]
+
+# q = ""
+
+# def queryPrompt(query_obj: AdvisoryQuery) -> str:
+#     q = query_obj.query
+#     return
+
+# query_lower = q.lower()
+
+# for pattern in BAD_PATTERNS:
+
+#     if pattern in query_lower:
+
+#         raise ValueError("Unsafe query detected")
 
 ADVISORY_PROMPT = PromptTemplate(
     input_variables=["query", "context", "source_list"],
@@ -111,6 +128,7 @@ Rules:
 
 # Context builder
 
+
 def build_context(chunks: list[SourceReference]) -> tuple[str, str]:
     """
     Build context string and source list from retrieved chunks.
@@ -118,6 +136,8 @@ def build_context(chunks: list[SourceReference]) -> tuple[str, str]:
     """
     context_parts = []
     seen_sources = {}
+
+    MAX_CONTEXT_CHARS = 8000
 
     for i, chunk in enumerate(chunks, start=1):
         ref_part = f" | Ref: {chunk.reference_number}" if chunk.reference_number else ""
@@ -129,12 +149,16 @@ def build_context(chunks: list[SourceReference]) -> tuple[str, str]:
         )
         seen_sources[chunk.doc_id] = chunk.source_name
 
+    context_text = context_text[:MAX_CONTEXT_CHARS]
+
     context_text = "\n\n---\n\n".join(context_parts)
     source_list = "\n".join(f"- {name}" for name in seen_sources.values())
 
     return context_text, source_list
 
+
 # Response parsers
+
 
 def parse_json(raw: str) -> Optional[dict]:
     """Layer 1: Try direct JSON parse."""
@@ -290,9 +314,14 @@ def requires_human_review(
             f"Confidence {confidence:.2f} below threshold {CONFIDENCE_THRESHOLD}",
         )
 
+    start = time.time()
+
     # 2. Retrieval itself flagged for review
     if retrieval.human_review_required and retrieval.human_review_reason:
         return True, retrieval.human_review_reason
+
+    retrieval_ms = (time.time() - start) * 1000
+    logger.debug(f"Review check retrieval signal evaluated in {retrieval_ms:.2f} ms")
 
     # 3. High severity risk flags
     flags_lower = {f.lower() for f in risk_flags}
@@ -320,7 +349,15 @@ def requires_human_review(
 
     return False, None
 
+
 # Main advisory generation
+
+
+def preprocess_query(query: str):
+
+    query = query.strip()
+    query = " ".join(query.split())
+    return query
 
 
 def generate_advisory(query_obj: AdvisoryQuery) -> AdvisoryResponse:
@@ -330,8 +367,11 @@ def generate_advisory(query_obj: AdvisoryQuery) -> AdvisoryResponse:
     try:
         # Step 1: Retrieve
         logger.info(f"[1/3] Retrieving | session_id={session_id}")
+
+        normalized_query = preprocess_query(query_obj.query)
+
         retrieval: RetrievalResult = retrieve(
-            query=query_obj.query,
+            query=normalized_query,
             top_k=query_obj.top_k,
         )
 
@@ -368,6 +408,9 @@ def generate_advisory(query_obj: AdvisoryQuery) -> AdvisoryResponse:
             )
 
         # Step 2: LLM call
+
+        llm_start = time.time()
+
         logger.info(f"[2/3] LLM call | session_id={session_id} | model={LLM_MODEL}")
         context_text, source_list = build_context(retrieval.chunks)
         prompt = ADVISORY_PROMPT.format(
@@ -383,6 +426,10 @@ def generate_advisory(query_obj: AdvisoryQuery) -> AdvisoryResponse:
             raise ValueError("LLM returned an empty response")
 
         logger.debug(f"LLM responded | chars={len(raw_response)}")
+
+        llm_ms = (time.time() - llm_start) * 1000
+
+        print(f"LLM call took {llm_ms:.2f} ms | session_id={session_id} | model={LLM_MODEL}")
 
         # Step 3: Parse + assemble response
         logger.info(f"[3/3] Parsing | session_id={session_id}")

@@ -30,10 +30,11 @@ from ingestion.parser import ParsedDocument, parse_document
 from ingestion.chunker import DocumentChunk, chunk_document
 from schemas import IndexingStatus
 from logger import get_logger
+from rag.bm25_manager import BM25Manager
 
 logger = get_logger(__name__)
 
-BATCH_SIZE = 50
+BATCH_SIZE = 32
 MAX_BATCH_RETRIES = 2
 RETRY_DELAY_SECONDS = 2
 
@@ -123,11 +124,7 @@ def get_collection(client: chromadb.ClientAPI) -> chromadb.Collection:
         raise
 
 
-def query_collection(
-    query_text: str,
-    top_k: int = 6,
-    doc_type_filter: Optional[str] = None,
-) -> dict:
+def query_collection(query_text: str, top_k: int = 6, metadata_filter=None) -> dict:
     """
     Retrieve top-k chunks for a query.
     Returns raw ChromaDB result dict with distances converted to similarity scores.
@@ -140,7 +137,7 @@ def query_collection(
 
     query_vector = embedding_manager.embed_query(query_text)
 
-    where_filter = {"doc_type": doc_type_filter} if doc_type_filter else None
+    where_filter = {"doc_type": metadata_filter} if metadata_filter else None
 
     results = collection.query(
         query_embeddings=[query_vector],
@@ -161,10 +158,12 @@ def query_collection(
 # Core ingestion
 
 
-def is_already_ingested(doc_id: str) -> bool:
-    """Check if doc_id has a processed record (idempotent ingestion)."""
-    record_path = Path(PROCESSED_DIR) / f"{doc_id}.json"
-    return record_path.exists()
+def is_already_ingested(document_hash: str):
+    records = get_all_document_records()
+    for record in records:
+        if record.get("document_hash") == document_hash:
+            return True
+    return False
 
 
 def ingest_document(
@@ -184,10 +183,10 @@ def ingest_document(
     }
 
     # Idempotency check
-    if is_already_ingested(doc_id):
-        logger.info(f"Already ingested, skipping | doc_id={doc_id}")
+    if is_already_ingested(parsed_doc.document_hash):
+        logger.info("Duplicate file skipped")
         result["status"] = IndexingStatus.COMPLETED
-        result["error"] = "Already ingested"
+        result["error"] = "Duplicate document"
         return result
 
     try:
@@ -260,17 +259,20 @@ def store_batch_with_retry(
                     "filename": c.filename,
                     "chunk_index": c.chunk_index,
                     "token_estimate": c.token_estimate,
-                    "page_number": c.page_number if c.page_number is not None else -1,
+                    "page_number": (c.page_number if c.page_number is not None else -1),
                     "doc_type": c.doc_type,
                     "source_name": c.source_name,
-                    "issuing_authority": c.issuing_authority or "",
-                    "issue_date": c.issue_date or "",
-                    "reference_number": c.reference_number or "",
+                    "issuing_authority": (c.issuing_authority or ""),
+                    "issue_date": (c.issue_date or ""),
+                    "reference_number": (c.reference_number or ""),
                     "tags": json.dumps(c.tags),
+                    "section": (c.section or ""),
+                    "chapter": (c.chapter or ""),
+                    "notification": (c.notification or ""),
+                    "hs_code": (c.hs_code or ""),
                 }
                 for c in batch
             ]
-
             # Normalize vectors before storage
             vectors = embedding_manager.embed_texts(texts)
 
@@ -280,6 +282,14 @@ def store_batch_with_retry(
                 documents=texts,
                 metadatas=metadatas,
             )
+
+            bm25 = BM25Manager()
+            bm25.chunk_store = texts
+            bm25.metadata_store = metadatas
+            bm25.chunk_ids = ids
+            bm25.build_index(texts)
+            bm25.save_index()
+
             logger.debug(
                 f"Batch {batch_num}/{total_batches} stored | attempt={attempt}"
             )
@@ -348,6 +358,7 @@ def save_processed_record(
             "chunk_count": chunk_count,
             "status": IndexingStatus.COMPLETED.value,
             "ingested_at": datetime.utcnow().isoformat(),
+            "document_hash": parsed_doc.document_hash,
         }
         with open(record_path, "w") as f:
             json.dump(record, f, indent=2)
