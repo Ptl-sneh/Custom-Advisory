@@ -38,9 +38,8 @@ MAX_BATCH_RETRIES = 2
 RETRY_DELAY_SECONDS = 2
 
 
-# ─────────────────────────────────────────────
 # Singleton: model loads once, reused per call
-# ─────────────────────────────────────────────
+
 
 class EmbeddingManager:
     """
@@ -48,39 +47,40 @@ class EmbeddingManager:
     Original code called get_embeddings() inside ingest_document() which
     re-initialized the model on every single document ingestion.
     """
-    _instance: Optional["EmbeddingManager"] = None
-    _model: Optional[OllamaEmbeddings] = None
+
+    instance: Optional["EmbeddingManager"] = None
+    model: Optional[OllamaEmbeddings] = None
 
     def __new__(cls):
-        if cls._instance is None:
-            cls._instance = super().__new__(cls)
-        return cls._instance
+        if cls.instance is None:
+            cls.instance = super().__new__(cls)
+        return cls.instance
 
     def get_model(self) -> OllamaEmbeddings:
-        if self._model is None:
+        if self.model is None:
             try:
-                self._model = OllamaEmbeddings(model=EMBEDDING_MODEL)
+                self.model = OllamaEmbeddings(model=EMBEDDING_MODEL)
                 logger.debug(f"Embedding model initialized | model={EMBEDDING_MODEL}")
             except Exception as e:
                 logger.error(f"Embedding model init failed | error={str(e)}")
                 raise
-        return self._model
+        return self.model
 
     def embed_texts(self, texts: list[str]) -> list[list[float]]:
         """Embed and L2-normalize so cosine similarity = dot product."""
         vectors = self.get_model().embed_documents(texts)
-        return [_l2_normalize(v) for v in vectors]
+        return [l2_normalize(v) for v in vectors]
 
     def embed_query(self, text: str) -> list[float]:
         """Embed a single query and L2-normalize."""
         vector = self.get_model().embed_query(text)
-        return _l2_normalize(vector)
+        return l2_normalize(vector)
 
 
-_embedding_manager = EmbeddingManager()
+embedding_manager = EmbeddingManager()
 
 
-def _l2_normalize(vector: list[float]) -> list[float]:
+def l2_normalize(vector: list[float]) -> list[float]:
     """
     Unit-normalize a vector.
     Why: ChromaDB cosine space computes 1 - cosine_similarity as the distance.
@@ -94,9 +94,8 @@ def _l2_normalize(vector: list[float]) -> list[float]:
     return [x / norm for x in vector]
 
 
-# ─────────────────────────────────────────────
 # ChromaDB helpers
-# ─────────────────────────────────────────────
+
 
 def get_chroma_client() -> chromadb.ClientAPI:
     try:
@@ -139,7 +138,7 @@ def query_collection(
     client = get_chroma_client()
     collection = get_collection(client)
 
-    query_vector = _embedding_manager.embed_query(query_text)
+    query_vector = embedding_manager.embed_query(query_text)
 
     where_filter = {"doc_type": doc_type_filter} if doc_type_filter else None
 
@@ -153,18 +152,16 @@ def query_collection(
     # Convert distances → similarity scores in place
     if results.get("distances"):
         results["similarities"] = [
-            [round(1.0 - d, 4) for d in dist_list]
-            for dist_list in results["distances"]
+            [round(1.0 - d, 4) for d in dist_list] for dist_list in results["distances"]
         ]
 
     return results
 
 
-# ─────────────────────────────────────────────
 # Core ingestion
-# ─────────────────────────────────────────────
 
-def _is_already_ingested(doc_id: str) -> bool:
+
+def is_already_ingested(doc_id: str) -> bool:
     """Check if doc_id has a processed record (idempotent ingestion)."""
     record_path = Path(PROCESSED_DIR) / f"{doc_id}.json"
     return record_path.exists()
@@ -187,7 +184,7 @@ def ingest_document(
     }
 
     # Idempotency check
-    if _is_already_ingested(doc_id):
+    if is_already_ingested(doc_id):
         logger.info(f"Already ingested, skipping | doc_id={doc_id}")
         result["status"] = IndexingStatus.COMPLETED
         result["error"] = "Already ingested"
@@ -214,7 +211,7 @@ def ingest_document(
         for i in tqdm(range(0, len(chunks), BATCH_SIZE), desc="Embedding"):
             batch = chunks[i : i + BATCH_SIZE]
             batch_num = (i // BATCH_SIZE) + 1
-            stored = _store_batch_with_retry(
+            stored = store_batch_with_retry(
                 collection, batch, batch_num, total_batches, doc_id
             )
             if stored:
@@ -227,7 +224,7 @@ def ingest_document(
                 f"Partial ingestion | doc_id={doc_id} | stored={total_stored} | failed={total_failed}"
             )
 
-        _save_processed_record(doc_id, parsed_doc, total_stored)
+        save_processed_record(doc_id, parsed_doc, total_stored)
         result["status"] = IndexingStatus.COMPLETED
         result["chunk_count"] = total_stored
         logger.info(
@@ -242,7 +239,7 @@ def ingest_document(
     return result
 
 
-def _store_batch_with_retry(
+def store_batch_with_retry(
     collection: chromadb.Collection,
     batch: list[DocumentChunk],
     batch_num: int,
@@ -275,7 +272,7 @@ def _store_batch_with_retry(
             ]
 
             # Normalize vectors before storage
-            vectors = _embedding_manager.embed_texts(texts)
+            vectors = embedding_manager.embed_texts(texts)
 
             collection.add(
                 ids=ids,
@@ -283,7 +280,9 @@ def _store_batch_with_retry(
                 documents=texts,
                 metadatas=metadatas,
             )
-            logger.debug(f"Batch {batch_num}/{total_batches} stored | attempt={attempt}")
+            logger.debug(
+                f"Batch {batch_num}/{total_batches} stored | attempt={attempt}"
+            )
             return True
 
         except Exception as e:
@@ -302,9 +301,8 @@ def _store_batch_with_retry(
     return False
 
 
-# ─────────────────────────────────────────────
 # Document management
-# ─────────────────────────────────────────────
+
 
 def delete_document(doc_id: str) -> bool:
     logger.info(f"Deleting document | doc_id={doc_id}")
@@ -318,7 +316,7 @@ def delete_document(doc_id: str) -> bool:
             return False
 
         collection.delete(ids=results["ids"])
-        _delete_processed_record(doc_id)
+        delete_processed_record(doc_id)
 
         logger.info(
             f"Document deleted | doc_id={doc_id} | chunks_removed={len(results['ids'])}"
@@ -330,7 +328,7 @@ def delete_document(doc_id: str) -> bool:
         return False
 
 
-def _save_processed_record(
+def save_processed_record(
     doc_id: str, parsed_doc: ParsedDocument, chunk_count: int
 ) -> None:
     try:
@@ -358,7 +356,7 @@ def _save_processed_record(
         logger.error(f"Record save failed | doc_id={doc_id} | error={str(e)}")
 
 
-def _delete_processed_record(doc_id: str) -> None:
+def delete_processed_record(doc_id: str) -> None:
     try:
         record_path = Path(PROCESSED_DIR) / f"{doc_id}.json"
         if record_path.exists():

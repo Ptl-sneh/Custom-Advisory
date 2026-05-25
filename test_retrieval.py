@@ -20,21 +20,27 @@ import sys
 import json
 from pathlib import Path
 
-# ── Make sure backend/ is in path ──────────────────────────────────
+# Make sure backend/ is in path
 sys.path.insert(0, str(Path(__file__).parent))
 
 from ingestion.embedder import query_collection
 from rag.confidence_score import calculate_confidence
 from config import TOP_K, CONFIDENCE_THRESHOLD
 
-# ══════════════════════════════════════════════════════════════════
+
 # Test queries — written specifically for the two documents you have
-# ══════════════════════════════════════════════════════════════════
+
 TEST_QUERIES = [
-    # ── From customs_excise_and_service_tax.pdf ───────────────────
+    # From customs_excise_and_service_tax.pdf
     {
         "query": "What is the correct HSN classification for a 36-port 100GE interface card?",
-        "expected_keywords": ["8517 7010", "8517 70", "parts", "PPCBA", "interface card"],
+        "expected_keywords": [
+            "8517 7010",
+            "8517 70",
+            "parts",
+            "PPCBA",
+            "interface card",
+        ],
         "doc_hint": "customs_excise_and_service_tax.pdf",
         "category": "HSN Classification",
     },
@@ -52,23 +58,40 @@ TEST_QUERIES = [
     },
     {
         "query": "What is the ruling on Optical Transport Network product classification?",
-        "expected_keywords": ["OTN", "Optical Transport Network", "8517 6290", "notification"],
+        "expected_keywords": [
+            "OTN",
+            "Optical Transport Network",
+            "8517 6290",
+            "notification",
+        ],
         "doc_hint": "customs_excise_and_service_tax.pdf",
         "category": "Case Law",
     },
     {
         "query": "What are the General Rules for Interpretation in customs tariff classification?",
-        "expected_keywords": ["GIR", "General Rules", "headings", "Section Notes", "Chapter Notes"],
+        "expected_keywords": [
+            "GIR",
+            "General Rules",
+            "headings",
+            "Section Notes",
+            "Chapter Notes",
+        ],
         "doc_hint": "customs_excise_and_service_tax.pdf",
         "category": "Tariff Classification Rules",
     },
     {
         "query": "What is the customs duty rate for populated printed circuit boards under 8517?",
-        "expected_keywords": ["8517 70 10", "Free", "populated", "printed circuit board", "PPCBA"],
+        "expected_keywords": [
+            "8517 70 10",
+            "Free",
+            "populated",
+            "printed circuit board",
+            "PPCBA",
+        ],
         "doc_hint": "customs_excise_and_service_tax.pdf",
         "category": "Duty Rate",
     },
-    # ── Cross-document / general ──────────────────────────────────
+    # Cross-document / general
     {
         "query": "What is Section 28 of the Customs Act?",
         "expected_keywords": ["Section 28", "duty", "short-levied", "recovery"],
@@ -77,16 +100,21 @@ TEST_QUERIES = [
     },
     {
         "query": "How are parts of machinery classified under Section XVI?",
-        "expected_keywords": ["Section XVI", "parts", "Note 2", "heading", "Chapter 84", "Chapter 85"],
+        "expected_keywords": [
+            "Section XVI",
+            "parts",
+            "Note 2",
+            "heading",
+            "Chapter 84",
+            "Chapter 85",
+        ],
         "doc_hint": "customs_excise_and_service_tax.pdf",
         "category": "Classification Rules",
     },
 ]
 
 
-# ══════════════════════════════════════════════════════════════════
 # Helpers
-# ══════════════════════════════════════════════════════════════════
 
 def check_keywords(chunk_texts: list[str], keywords: list[str]) -> list[str]:
     """Return which expected keywords appear in any retrieved chunk."""
@@ -99,11 +127,11 @@ def print_separator(char="─", width=70):
 
 
 def run_test(query_config: dict, top_k: int) -> dict:
-    query        = query_config["query"]
-    keywords     = query_config["expected_keywords"]
-    category     = query_config["category"]
+    query = query_config["query"]
+    keywords = query_config["expected_keywords"]
+    category = query_config["category"]
 
-    # ── 1. Retrieve from ChromaDB ─────────────────────────────────
+    # 1. Retrieve from ChromaDB
     results = query_collection(query_text=query, top_k=top_k)
 
     if not results or not results.get("ids") or not results["ids"][0]:
@@ -114,12 +142,12 @@ def run_test(query_config: dict, top_k: int) -> dict:
             "chunks_retrieved": 0,
         }
 
-    ids         = results["ids"][0]
-    documents   = results["documents"][0]
-    metadatas   = results["metadatas"][0]
+    ids = results["ids"][0]
+    documents = results["documents"][0]
+    metadatas = results["metadatas"][0]
     similarities = results.get("similarities", [[]])[0]
 
-    # ── 2. Calculate confidence ───────────────────────────────────
+    # 2. Calculate confidence 
     doc_types = [m.get("doc_type", "Other") for m in metadatas]
     confidence = calculate_confidence(
         similarity_scores=similarities,
@@ -128,7 +156,7 @@ def run_test(query_config: dict, top_k: int) -> dict:
         confidence_threshold=CONFIDENCE_THRESHOLD,
     )
 
-    # ── 3. Keyword hit check ──────────────────────────────────────
+    # 3. Keyword hit check
     found_keywords = check_keywords(documents, keywords)
     keyword_hit_rate = len(found_keywords) / len(keywords) if keywords else 0
 
@@ -147,9 +175,9 @@ def run_test(query_config: dict, top_k: int) -> dict:
     }
 
 
-# ══════════════════════════════════════════════════════════════════
 # Main
-# ══════════════════════════════════════════════════════════════════
+
+
 
 def main():
     print("\n" + "═" * 70)
@@ -176,33 +204,38 @@ def main():
             print("    → Check: is the document ingested? Run ingest first.")
             continue
 
-        # ── Print retrieved chunks ────────────────────────────────
+        # Print retrieved chunks
         print(f"  Retrieved {result['chunks_retrieved']} chunks:")
         for j, (doc, meta, sim) in enumerate(
-            zip(result["documents"], result["metadatas"], result["similarities"]), start=1
+            zip(result["documents"], result["metadatas"], result["similarities"]),
+            start=1,
         ):
-            source   = meta.get("source_name", meta.get("filename", "unknown"))
-            page     = meta.get("page_number", -1)
+            source = meta.get("source_name", meta.get("filename", "unknown"))
+            page = meta.get("page_number", -1)
             doc_type = meta.get("doc_type", "?")
             page_str = f"p.{page}" if page and page != -1 else "p.?"
-            sim_bar  = "█" * int(sim * 20)  # visual bar
+            sim_bar = "█" * int(sim * 20)  # visual bar
 
             print(f"\n  Chunk {j} | sim={sim:.4f} [{sim_bar:<20}]")
             print(f"          | source={source} | {page_str} | type={doc_type}")
             # Show first 200 chars of chunk
             preview = doc[:200].replace("\n", " ")
-            print(f"          | \"{preview}...\"")
+            print(f'          | "{preview}..."')
 
-        # ── Confidence breakdown ──────────────────────────────────
+        # Confidence breakdown
         c = result["confidence"]
-        print(f"\n  Confidence Score: {c.score:.3f}  {'✓' if c.score >= CONFIDENCE_THRESHOLD else '✗ LOW'}")
+        print(
+            f"\n  Confidence Score: {c.score:.3f}  {'✓' if c.score >= CONFIDENCE_THRESHOLD else '✗ LOW'}"
+        )
         print(f"    retrieval_quality : {c.retrieval_quality:.3f} (weight 45%)")
         print(f"    source_authority  : {c.source_authority:.3f} (weight 25%)")
         print(f"    source_agreement  : {c.source_agreement:.3f} (weight 20%)")
         print(f"    coverage_bonus    : {c.coverage_bonus:.3f} (weight 10%)")
-        print(f"    human_review      : {'YES — ' + c.human_review_reason if c.human_review_required else 'No'}")
+        print(
+            f"    human_review      : {'YES — ' + c.human_review_reason if c.human_review_required else 'No'}"
+        )
 
-        # ── Keyword check ─────────────────────────────────────────
+        # Keyword check
         hit_rate = result["keyword_hit_rate"]
         status_icon = "✓" if hit_rate >= 0.5 else "⚠" if hit_rate > 0 else "✗"
         print(f"\n  Keyword hit rate  : {status_icon} {hit_rate:.0%}")
@@ -214,9 +247,8 @@ def main():
         if hit_rate >= 0.5:
             passed += 1
 
-    # ══════════════════════════════════════════════════════════════
     # Summary
-    # ══════════════════════════════════════════════════════════════
+
     print("\n\n" + "═" * 70)
     print("  SUMMARY")
     print("═" * 70)
@@ -224,9 +256,15 @@ def main():
     ok_results = [r for r in all_results if r["status"] == "OK"]
 
     if ok_results:
-        avg_top1_sim = sum(r["similarities"][0] for r in ok_results if r["similarities"]) / len(ok_results)
-        avg_confidence = sum(r["confidence"].score for r in ok_results) / len(ok_results)
-        review_required = sum(1 for r in ok_results if r["confidence"].human_review_required)
+        avg_top1_sim = sum(
+            r["similarities"][0] for r in ok_results if r["similarities"]
+        ) / len(ok_results)
+        avg_confidence = sum(r["confidence"].score for r in ok_results) / len(
+            ok_results
+        )
+        review_required = sum(
+            1 for r in ok_results if r["confidence"].human_review_required
+        )
 
         print(f"\n  Queries run          : {total_queries}")
         print(f"  Keyword pass (≥50%)  : {passed}/{total_queries}")
@@ -239,9 +277,11 @@ def main():
         print(f"    0.50–0.70 → moderate (answer may be incomplete)")
         print(f"    < 0.50 → weak (chunk may be irrelevant — check chunking)")
 
-        # ── Diagnose problems ────────────────────────────────────
-        low_sim = [r for r in ok_results if r["similarities"] and r["similarities"][0] < 0.50]
-        low_kw  = [r for r in ok_results if r["keyword_hit_rate"] == 0]
+        # Diagnose problems
+        low_sim = [
+            r for r in ok_results if r["similarities"] and r["similarities"][0] < 0.50
+        ]
+        low_kw = [r for r in ok_results if r["keyword_hit_rate"] == 0]
 
         if low_sim:
             print(f"\n  ⚠ Low similarity queries ({len(low_sim)}):")
@@ -267,7 +307,9 @@ def main():
         print("     ingest_document('data/raw/customs_excise_and_service_tax.pdf',")
         print("         {'doc_type': 'Case Law', 'source_name': 'CESTAT Huawei 2023'})")
         print("     ingest_document('data/raw/customs_tariff_act.pdf',")
-        print("         {'doc_type': 'Customs Act', 'source_name': 'Customs Tariff Act 1975'})")
+        print(
+            "         {'doc_type': 'Customs Act', 'source_name': 'Customs Tariff Act 1975'})"
+        )
 
     print("\n" + "═" * 70)
     print("  WHAT TO DO NEXT BASED ON RESULTS")
