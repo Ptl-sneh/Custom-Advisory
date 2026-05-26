@@ -84,7 +84,7 @@ def mmr_rerank(
     candidate_vectors: list[list[float]],
     candidate_indices: list[int],
     top_k: int,
-    lambda_param: float = 0.7,
+    lambda_param: float = 0.95,
 ) -> list[int]:
     """
     Maximal Marginal Relevance reranking.
@@ -180,6 +180,25 @@ def retrieve(
     else:
         top_k = 8
 
+    cross_doc = any(
+        word in query.lower()
+        for word in [
+            "difference",
+            "compare",
+            "confirm",
+            "referenced",
+            "both",
+            "discrepancy",
+        ]
+    )
+
+    if cross_doc:
+
+        top_k = max(
+            top_k,
+            12,
+        )
+
     try:
         # 1. Embed query
         prefixed_query = add_query_prefix(query)
@@ -221,6 +240,21 @@ def retrieve(
         # Dividing by 2 was artificially halving the distance and
         # inflating every score by roughly 15-20 points.
         similarities = [round(1.0 - d, 4) for d in distances]
+
+        # BM25 retrieval
+
+        bm25_results = bm25_manager.search(
+            query,
+            top_k=20,
+        )
+        bm25_scores = {}
+        if bm25_results:
+            max_score = max(score for _, score in bm25_results)
+            if max_score > 0:
+                for idx, score in bm25_results:
+                    chunk_id = bm25_manager.chunk_ids[idx]
+                    bm25_scores[chunk_id] = score / max_score
+
         logger.debug(f"Similarities (fixed): {similarities}")
 
         # 4. MMR reranking
@@ -244,9 +278,24 @@ def retrieve(
         for idx in selected_indices:
             doc_text = documents[idx]
             meta = metadatas[idx]
-            sim = similarities[idx]
+            dense_score = similarities[idx]
+            chunk_id = ids[idx]
+            bm25_score = bm25_scores.get(
+                chunk_id,
+                0.0,
+            )
+
+            if bm25_score > 0:
+                sim = round(
+                    dense_score * 0.75 + bm25_score * 0.25,
+                    4,
+                )
+            else:
+                sim = dense_score
 
             page_num = meta.get("page_number", -1)
+
+            logger.debug(f"page metadata={meta.get('page_number')}")
 
             chunks.append(
                 SourceReference(

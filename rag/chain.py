@@ -137,7 +137,7 @@ def build_context(chunks: list[SourceReference]) -> tuple[str, str]:
     context_parts = []
     seen_sources = {}
 
-    MAX_CONTEXT_CHARS = 8000
+    # MAX_CONTEXT_CHARS = 8000
 
     for i, chunk in enumerate(chunks, start=1):
         ref_part = f" | Ref: {chunk.reference_number}" if chunk.reference_number else ""
@@ -149,7 +149,7 @@ def build_context(chunks: list[SourceReference]) -> tuple[str, str]:
         )
         seen_sources[chunk.doc_id] = chunk.source_name
 
-    context_text = context_text[:MAX_CONTEXT_CHARS]
+    # context_text = context_text[:MAX_CONTEXT_CHARS]
 
     context_text = "\n\n---\n\n".join(context_parts)
     source_list = "\n".join(f"- {name}" for name in seen_sources.values())
@@ -370,6 +370,18 @@ def generate_advisory(query_obj: AdvisoryQuery) -> AdvisoryResponse:
 
         normalized_query = preprocess_query(query_obj.query)
 
+        BAD_PATTERNS = [
+            "ignore previous",
+            "system prompt",
+            "forget instructions",
+            "override",
+        ]
+
+        query_lower = query_obj.query.lower()
+        for pattern in BAD_PATTERNS:
+            if pattern in query_lower:
+                raise ValueError("Unsafe query detected")
+
         retrieval: RetrievalResult = retrieve(
             query=normalized_query,
             top_k=query_obj.top_k,
@@ -429,7 +441,9 @@ def generate_advisory(query_obj: AdvisoryQuery) -> AdvisoryResponse:
 
         llm_ms = (time.time() - llm_start) * 1000
 
-        print(f"LLM call took {llm_ms:.2f} ms | session_id={session_id} | model={LLM_MODEL}")
+        print(
+            f"LLM call took {llm_ms:.2f} ms | session_id={session_id} | model={LLM_MODEL}"
+        )
 
         # Step 3: Parse + assemble response
         logger.info(f"[3/3] Parsing | session_id={session_id}")

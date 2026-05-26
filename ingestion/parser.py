@@ -15,6 +15,7 @@ logger = get_logger(__name__)
 
 
 class ParsedDocument(BaseModel):
+
     filename: str
     file_path: str
     raw_text: str
@@ -26,6 +27,11 @@ class ParsedDocument(BaseModel):
     issue_date: Optional[str] = None
     reference_number: Optional[str] = None
     tags: list[str] = Field(default_factory=list)
+    chapter: Optional[str] = None
+    section: Optional[str] = None
+    notification_number: Optional[str] = None
+    hs_code: Optional[str] = None
+    customs_section: Optional[str] = None
     document_hash: str
 
 
@@ -106,10 +112,66 @@ def validate_extraction(text: str):
 
 
 def enrich_metadata(raw_text: str, metadata: dict):
-    metadata.setdefault("chapter", None)
-    metadata.setdefault("section", None)
-    metadata.setdefault("notification_number", None)
-    metadata.setdefault("hs_code", None)
+
+    chapter = None
+    section = None
+    notification = None
+    hs_code = None
+    customs_section = None
+
+    chapter_match = re.search(
+        r"CHAPTER\s+([IVXLC0-9]+)",
+        raw_text,
+        re.IGNORECASE,
+    )
+
+    if chapter_match:
+        chapter = chapter_match.group(1)
+
+    section_match = re.search(
+        r"\bSection\s+(\d+[A-Z]?)",
+        raw_text,
+        re.IGNORECASE,
+    )
+
+    if section_match:
+        section = section_match.group(1)
+
+    notification_match = re.search(
+        r"Notification\s+No\.?\s*([\w/-]+)",
+        raw_text,
+        re.IGNORECASE,
+    )
+
+    if notification_match:
+        notification = notification_match.group(1)
+
+    hs_match = re.search(
+        r"\b\d{4}(?:\.\d{2})?(?:\.\d{2})?\b",
+        raw_text,
+    )
+
+    if hs_match:
+        candidate = hs_match.group(0)
+        digits = candidate.replace(".", "")
+        if len(digits) in [4, 6, 8]:
+            hs_code = candidate
+
+    customs_match = re.search(
+        r"\bSection\s+(\d+[A-Z]?)\s+of\s+the\s+Customs\s+Act",
+        raw_text,
+        re.IGNORECASE,
+    )
+
+    if customs_match:
+        customs_section = customs_match.group(1)
+
+    metadata["chapter"] = chapter
+    metadata["section"] = section
+    metadata["notification_number"] = notification
+    metadata["hs_code"] = hs_code
+    metadata["customs_section"] = customs_section
+
     return metadata
 
 
@@ -218,6 +280,7 @@ def parse_document(file_path: str, metadata: dict) -> ParsedDocument:
     validation = validate_extraction(raw_text)
     logger.info(f"Validation={validation}")
     metadata = enrich_metadata(raw_text, metadata)
+
     return ParsedDocument(
         filename=path.name,
         file_path=str(path),
@@ -230,5 +293,10 @@ def parse_document(file_path: str, metadata: dict) -> ParsedDocument:
         issue_date=metadata.get("issue_date"),
         reference_number=metadata.get("reference_number"),
         tags=metadata.get("tags", []),
+        chapter=metadata.get("chapter"),
+        section=metadata.get("section"),
+        notification_number=metadata.get("notification_number"),
+        hs_code=metadata.get("hs_code"),
+        customs_section=metadata.get("customs_section"),
         document_hash=fingerprint(raw_text),
     )

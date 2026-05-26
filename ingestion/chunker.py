@@ -145,8 +145,20 @@ def chunk_document(parsed_doc: ParsedDocument, doc_id: str) -> list[DocumentChun
         chunks: list[DocumentChunk] = []
         skipped = 0
 
+        last_seen_page = None
+
         for idx, chunk_text in enumerate(raw_chunks):
-            page_number = extract_page_number(chunk_text)
+            detected_page = extract_page_number(chunk_text)
+
+
+            if detected_page is not None:
+                last_seen_page = detected_page
+
+            page_number = last_seen_page
+
+            logger.debug(
+                f"chunk={idx} " f"page={page_number} " f"first100={chunk_text[:100]}"
+            )
             clean_text = extract_clean_text(chunk_text)
 
             if len(clean_text) < MIN_CHUNK_LENGTH:

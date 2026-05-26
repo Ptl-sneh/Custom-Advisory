@@ -183,16 +183,25 @@ def ingest_document(
     }
 
     # Idempotency check
-    if is_already_ingested(parsed_doc.document_hash):
-        logger.info("Duplicate file skipped")
-        result["status"] = IndexingStatus.COMPLETED
-        result["error"] = "Duplicate document"
-        return result
+    # if is_already_ingested(parsed_doc.document_hash):
+    #     logger.info("Duplicate file skipped")
+    #     result["status"] = IndexingStatus.COMPLETED
+    #     result["error"] = "Duplicate document"
+    #     return result
 
     try:
         # Step 1: Parse
         logger.info(f"[1/3] Parsing | doc_id={doc_id}")
         parsed_doc: ParsedDocument = parse_document(file_path, metadata)
+
+        if is_already_ingested(parsed_doc.document_hash):
+
+            logger.info(f"Duplicate skipped | file={parsed_doc.filename}")
+
+            result["status"] = IndexingStatus.COMPLETED
+            result["error"] = "Duplicate document"
+
+            return result
 
         # Step 2: Chunk
         logger.info(f"[2/3] Chunking | doc_id={doc_id}")
@@ -222,6 +231,22 @@ def ingest_document(
             logger.warning(
                 f"Partial ingestion | doc_id={doc_id} | stored={total_stored} | failed={total_failed}"
             )
+
+        logger.info("Building BM25 index")
+
+        all_chunks = collection.get(include=["documents", "metadatas"])
+
+        bm25 = BM25Manager()
+
+        bm25.chunk_store = all_chunks["documents"]
+        bm25.metadata_store = all_chunks["metadatas"]
+        bm25.chunk_ids = all_chunks["ids"]
+
+        bm25.build_index(all_chunks["documents"])
+
+        bm25.save_index()
+
+        logger.info(f"BM25 rebuilt | chunks={len(all_chunks['documents'])}")
 
         save_processed_record(doc_id, parsed_doc, total_stored)
         result["status"] = IndexingStatus.COMPLETED
@@ -282,13 +307,6 @@ def store_batch_with_retry(
                 documents=texts,
                 metadatas=metadatas,
             )
-
-            bm25 = BM25Manager()
-            bm25.chunk_store = texts
-            bm25.metadata_store = metadatas
-            bm25.chunk_ids = ids
-            bm25.build_index(texts)
-            bm25.save_index()
 
             logger.debug(
                 f"Batch {batch_num}/{total_batches} stored | attempt={attempt}"

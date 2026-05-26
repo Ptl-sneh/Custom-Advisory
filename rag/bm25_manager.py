@@ -3,7 +3,14 @@ import re
 import pickle
 from pathlib import Path
 
-BM25_PATH = Path("backend/retrieval/bm25_index.pkl")
+BM25_DIR = Path("rag")
+
+BM25_DIR.mkdir(
+    parents=True,
+    exist_ok=True,
+)
+
+BM25_PATH = BM25_DIR / "bm25_index.pkl"
 
 
 class BM25Manager:
