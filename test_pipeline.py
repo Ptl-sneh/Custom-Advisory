@@ -2,18 +2,7 @@ from rag.retriever import retrieve
 from rag.chain import generate_advisory
 from schemas.advisory import AdvisoryQuery
 
-# Change this query to test different things
-# Good test queries (from your actual documents):
-#   "What is the HSN classification for a 36-port 100GE interface card?"
-#   "What penalty was imposed on Huawei for misclassification?"
-#   "What is the difference between CTH 8517 7010 and CTH 8517 6290?"
-#   "What are the General Rules for Interpretation in customs tariff?"
-#   "What is the ruling on Optical Transport Network product classification?"
-#
-# Bad query (tests out-of-scope gate):
-#   "What is RAG?" → should return confidence 0.0 and human_review=True
-
-QUERY = "What classification did the appellants claim for the imported goods, what classification did the department insist on, and what was the Tribunal's conclusion?"
+QUERY = "What is the standard rate of duty for customs tariff item 8517 62 90 as listed in the tariff schedule?"
 
 
 print("\n" + "=" * 80)
@@ -47,7 +36,7 @@ for idx, chunk in enumerate(retrieval.chunks, 1):
     print(f"Page:{chunk.page_number}")
     print(f"Score:{chunk.similarity_score}")
     print(f"Reference:{chunk.reference_number}")
-    print(f"Text:{chunk.chunk_text[:300]}...")
+    print(f"Text:{chunk.chunk_text}")
 
 
 print("\n\n" + "=" * 80)
@@ -90,16 +79,3 @@ print("\nSOURCES")
 print("-" * 40)
 for s in response.source_references:
     print(f"  {s.source_name} | page {s.page_number} | score {s.similarity_score}")
-
-
-# Uncomment to test out-of-scope gate
-# Should return: confidence=0.0, human_review=True, empty sources
-
-# print("\n\n" + "=" * 80)
-# print("OUT-OF-SCOPE GATE TEST")
-# print("=" * 80)
-# fake = AdvisoryQuery(query="What duty applies to moon rock imports?")
-# fake_response = generate_advisory(fake)
-# print(f"Short Answer:{fake_response.short_answer}")
-# print(f"Confidence:{fake_response.confidence_score}")
-# print(f"Review:{fake_response.human_review_required}")

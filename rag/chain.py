@@ -40,6 +40,7 @@ from schemas.advisory import AdvisoryQuery, AdvisoryResponse, SourceReference
 from schemas.common import ReviewStatus
 from logger import get_logger
 import time
+from rag.answer_confidence import (calculate_answer_confidence)
 
 logger = get_logger(__name__)
 
@@ -74,22 +75,6 @@ class LLMManager:
 
 
 llm_manager = LLMManager()
-
-# BAD_PATTERNS = ["ignore previous", "system prompt", "forget instructions", "override"]
-
-# q = ""
-
-# def queryPrompt(query_obj: AdvisoryQuery) -> str:
-#     q = query_obj.query
-#     return
-
-# query_lower = q.lower()
-
-# for pattern in BAD_PATTERNS:
-
-#     if pattern in query_lower:
-
-#         raise ValueError("Unsafe query detected")
 
 ADVISORY_PROMPT = PromptTemplate(
     input_variables=["query", "context", "source_list"],
@@ -134,10 +119,9 @@ def build_context(chunks: list[SourceReference]) -> tuple[str, str]:
     Build context string and source list from retrieved chunks.
     Returns (context_text, source_list_text)
     """
+    logger.info(f"Building context from {len(chunks)} chunks")
     context_parts = []
     seen_sources = {}
-
-    # MAX_CONTEXT_CHARS = 8000
 
     for i, chunk in enumerate(chunks, start=1):
         ref_part = f" | Ref: {chunk.reference_number}" if chunk.reference_number else ""
@@ -149,11 +133,10 @@ def build_context(chunks: list[SourceReference]) -> tuple[str, str]:
         )
         seen_sources[chunk.doc_id] = chunk.source_name
 
-    # context_text = context_text[:MAX_CONTEXT_CHARS]
-
     context_text = "\n\n---\n\n".join(context_parts)
     source_list = "\n".join(f"- {name}" for name in seen_sources.values())
 
+    logger.info(f"Context built | unique_sources={len(seen_sources)} | context_chars={len(context_text)}")
     return context_text, source_list
 
 
@@ -250,7 +233,7 @@ def parse_llm_response(raw: str) -> dict:
 
     result = parse_json(raw)
     if result:
-        logger.debug("Parsed via JSON")
+        logger.info("Successfully parsed LLM response via JSON")
         # Normalize fields
         result.setdefault("short_answer", "")
         result.setdefault("classification", None)
@@ -267,7 +250,7 @@ def parse_llm_response(raw: str) -> dict:
 
     result = parse_sections(raw)
     if result:
-        logger.debug("Parsed via section headers")
+        logger.info("Successfully parsed LLM response via section headers")
         return result
 
     return parse_fallback(raw)
@@ -309,10 +292,9 @@ def requires_human_review(
     """
     # 1. Confidence below threshold
     if confidence < CONFIDENCE_THRESHOLD:
-        return (
-            True,
-            f"Confidence {confidence:.2f} below threshold {CONFIDENCE_THRESHOLD}",
-        )
+        reason = f"Confidence {confidence:.2f} below threshold {CONFIDENCE_THRESHOLD}"
+        logger.info(f"Human review required: {reason}")
+        return True, reason
 
     start = time.time()
 
@@ -327,7 +309,9 @@ def requires_human_review(
     flags_lower = {f.lower() for f in risk_flags}
     triggered = HIGH_SEVERITY_FLAGS & flags_lower
     if triggered:
-        return True, f"High severity risk flags: {', '.join(triggered)}"
+        reason = f"High severity risk flags: {', '.join(triggered)}"
+        logger.info(f"Human review required: {reason}")
+        return True, reason
 
     # 4. LLM said it couldn't find the answer
     short_answer = parsed.get("short_answer", "").lower()
@@ -341,22 +325,27 @@ def requires_human_review(
         "cannot find",
     ]
     if any(p in short_answer for p in not_found_phrases):
-        return True, "LLM indicated answer not found in provided documents"
+        reason = "LLM indicated answer not found in provided documents"
+        logger.info(f"Human review required: {reason}")
+        return True, reason
 
     # 5. Parse failed
     if "llm_response_parse_failed" in flags_lower:
-        return True, "LLM response could not be parsed"
+        reason = "LLM response could not be parsed"
+        logger.info(f"Human review required: {reason}")
+        return True, reason
 
+    logger.info("No human review required based on chain logic.")
     return False, None
 
 
 # Main advisory generation
 
-
 def preprocess_query(query: str):
-
+    logger.info(f"Preprocessing query | original_len={len(query)}")
     query = query.strip()
     query = " ".join(query.split())
+    logger.info(f"Preprocessed query | final_len={len(query)}")
     return query
 
 
@@ -380,12 +369,15 @@ def generate_advisory(query_obj: AdvisoryQuery) -> AdvisoryResponse:
         query_lower = query_obj.query.lower()
         for pattern in BAD_PATTERNS:
             if pattern in query_lower:
+                logger.info(f"Unsafe query detected matching pattern: '{pattern}'")
                 raise ValueError("Unsafe query detected")
 
         retrieval: RetrievalResult = retrieve(
             query=normalized_query,
             top_k=query_obj.top_k,
         )
+
+        logger.info(f"Retrieval complete | chunks_returned={len(retrieval.chunks) if retrieval.chunks else 0} | is_confident={retrieval.is_confident}")
 
         if not retrieval.chunks:
             raise ValueError("No relevant documents found for this query.")
@@ -437,9 +429,9 @@ def generate_advisory(query_obj: AdvisoryQuery) -> AdvisoryResponse:
         if not raw_response or not raw_response.strip():
             raise ValueError("LLM returned an empty response")
 
-        logger.debug(f"LLM responded | chars={len(raw_response)}")
-
         llm_ms = (time.time() - llm_start) * 1000
+        
+        logger.info(f"LLM responded | chars={len(raw_response)} | time_ms={llm_ms:.2f}")
 
         print(
             f"LLM call took {llm_ms:.2f} ms | session_id={session_id} | model={LLM_MODEL}"
@@ -447,14 +439,37 @@ def generate_advisory(query_obj: AdvisoryQuery) -> AdvisoryResponse:
 
         # Step 3: Parse + assemble response
         logger.info(f"[3/3] Parsing | session_id={session_id}")
+
         parsed = parse_llm_response(raw_response)
 
-        risk_flags = parsed.get("risk_flags", [])
-        if not isinstance(risk_flags, list):
-            risk_flags = [risk_flags] if risk_flags else []
+        retrieval_confidence = retrieval.confidence_score
 
-        # Confidence comes from retriever (4-signal) — not recalculated here
-        confidence = retrieval.confidence_score
+        # Final answer text from LLM
+        final_answer = parsed.get(
+            "short_answer",
+            ""
+        )
+
+        # NEW: answer confidence
+        answer_confidence = (
+            calculate_answer_confidence(
+                answer=final_answer,
+                retrieved_chunks=retrieval.chunks,
+                retrieval_confidence=retrieval_confidence
+            )
+        )
+
+        risk_flags = parsed.get("risk_flags", [])
+
+        if not isinstance(risk_flags, list):
+            risk_flags = (
+                [risk_flags]
+                if risk_flags
+                else []
+            )
+
+        # Use answer confidence downstream
+        confidence = answer_confidence
 
         review_required, review_reason = requires_human_review(
             confidence=confidence,

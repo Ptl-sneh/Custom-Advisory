@@ -1,34 +1,8 @@
-"""
-rag/retriever.py  —  Optimized Retriever
-==========================================
 
-Changes from original:
-  1. FIXED similarity formula: 1 - distance (not 1 - distance/2)
-     The old formula inflated every score — a real 0.70 showed as 0.85.
-     ChromaDB cosine space: distance = 1 - cosine_similarity, so
-     cosine_similarity = 1 - distance. That's it.
-
-  2. EmbeddingManager singleton: no longer re-initializes OllamaEmbeddings
-     on every retrieve() call.
-
-  3. Uses confidence_score.py properly: the 4-signal confidence calculation
-     now drives is_confident and human_review, not a manual threshold check.
-
-  4. MMR reranking: after fetching top_k * 2 candidates, picks the most
-     diverse top_k using Maximal Marginal Relevance. Avoids returning 6
-     near-identical chunks about the same paragraph.
-
-  5. Nomic prefix: if using nomic-embed-text, query must be prefixed with
-     "search_query: " for correct asymmetric encoding.
-"""
-
-import json
-import math
 from typing import Optional
 from pydantic import BaseModel
 
 from config import (
-    VECTOR_STORE_DIR,
     EMBEDDING_MODEL,
     TOP_K,
     CONFIDENCE_THRESHOLD,
@@ -38,6 +12,7 @@ from rag.confidence_score import calculate_confidence, ConfidenceResult
 from schemas.advisory import SourceReference
 from logger import get_logger
 from .bm25_manager import BM25Manager
+from rag.confidence_score import calculate_confidence, ConfidenceResult, STRONG_MATCH_THRESHOLD
 
 logger = get_logger(__name__)
 
@@ -90,15 +65,15 @@ def mmr_rerank(
     Maximal Marginal Relevance reranking.
 
     Balances relevance to query vs diversity among selected chunks.
-    lambda_param=0.7 means 70% relevance, 30% diversity.
+    lambda_param=0.95 means 95% relevance, 5% diversity.
     Higher lambda → more relevance focused.
     Lower lambda  → more diversity focused.
-
-    For legal docs: 0.7 is a good balance — we want relevant chunks
+    This helps prevent returning 5 chunks that are all near-duplicates of the same paragraph,
     but not 6 copies of the same paragraph.
 
     Returns indices (from candidate_indices) of selected chunks.
     """
+    logger.info(f"Starting MMR reranking | top_k={top_k} | candidates={len(candidate_vectors) if candidate_vectors else 0} | lambda_param={lambda_param}")
     if not candidate_vectors or top_k <= 0:
         return candidate_indices[:top_k]
 
@@ -179,6 +154,8 @@ def retrieve(
         top_k = 6
     else:
         top_k = 8
+        
+    logger.info(f"Adjusted top_k based on query_words ({query_words}): {top_k}")
 
     cross_doc = any(
         word in query.lower()
@@ -193,11 +170,11 @@ def retrieve(
     )
 
     if cross_doc:
-
         top_k = max(
             top_k,
             12,
         )
+        logger.info(f"Cross-document query detected. Adjusted top_k to {top_k}")
 
     try:
         # 1. Embed query
@@ -208,6 +185,7 @@ def retrieve(
         # 2. Fetch candidates from ChromaDB
         # Fetch 2x top_k so MMR has candidates to choose from
         fetch_k = max(top_k * 4, 20) if use_mmr else top_k
+        logger.info(f"Fetching candidates from ChromaDB | fetch_k={fetch_k}")
 
         client = get_chroma_client()
         collection = get_collection(client)
@@ -224,12 +202,12 @@ def retrieve(
 
         ids = results["ids"][0]
         documents = results["documents"][0]
-        metadatas = results["metadatas"][0]
+        metadatas = results["metadatas"][0] 
         distances = results["distances"][0]
         embeddings = results.get("embeddings", [[]])[0]  # for MMR
 
-        logger.debug(f"ChromaDB returned {len(ids)} candidates")
-        logger.debug(f"Raw distances: {[round(d, 4) for d in distances]}")
+        logger.info(f"ChromaDB returned {len(ids)} candidates")
+        logger.info(f"Raw distances: {[round(d, 4) for d in distances]}")
 
         # 3. FIX: Convert distance → similarity
         # ChromaDB cosine space: distance = 1 - cosine_similarity
@@ -247,6 +225,7 @@ def retrieve(
             query,
             top_k=20,
         )
+        logger.info(f"BM25 retrieval returned {len(bm25_results) if bm25_results else 0} results")
         bm25_scores = {}
         if bm25_results:
             max_score = max(score for _, score in bm25_results)
@@ -255,7 +234,7 @@ def retrieve(
                     chunk_id = bm25_manager.chunk_ids[idx]
                     bm25_scores[chunk_id] = score / max_score
 
-        logger.debug(f"Similarities (fixed): {similarities}")
+        logger.info(f"Similarities (fixed): {similarities}")
 
         # 4. MMR reranking
         if use_mmr and embeddings and len(embeddings) >= top_k:
@@ -264,9 +243,9 @@ def retrieve(
                 candidate_vectors=embeddings,
                 candidate_indices=list(range(len(ids))),
                 top_k=top_k,
-                lambda_param=0.7,
+                lambda_param=0.95,
             )
-            logger.debug(f"MMR selected indices: {selected_indices}")
+            logger.info(f"MMR selected indices: {selected_indices}")
         else:
             selected_indices = list(range(min(top_k, len(ids))))
 
@@ -310,16 +289,9 @@ def retrieve(
             )
             final_similarities.append(sim)
 
-            MIN_SIMILARITY = 0.45
-            filtered = [
-                (chunk, sim, doc)
-                for chunk, sim, doc in zip(chunks, final_similarities, final_doc_types)
-                if sim >= MIN_SIMILARITY
-            ]
-
             final_doc_types.append(meta.get("doc_type", "Other"))
 
-            logger.debug(
+            logger.info(
                 f"Chunk idx={idx} | source={meta.get('source_name')} | "
                 f"sim={sim:.4f} | doc_type={meta.get('doc_type')}"
             )
@@ -333,7 +305,7 @@ def retrieve(
             confidence_threshold=CONFIDENCE_THRESHOLD,
         )
 
-        strong_chunks = sum(1 for s in final_similarities if s >= 0.70)
+        strong_chunks = sum(1 for s in final_similarities if s >= STRONG_MATCH_THRESHOLD)
 
         logger.info(
             f"Retrieval complete | chunks={len(chunks)} | "

@@ -41,7 +41,7 @@ DOC_TYPE_AUTHORITY: dict[str, float] = {
 }
 
 # Thresholds
-STRONG_MATCH_THRESHOLD = 0.65  # lowered from 0.70
+STRONG_MATCH_THRESHOLD = 0.70
 WEAK_MATCH_THRESHOLD = 0.45
 MIN_CHUNKS_FOR_COVERAGE = 3
 
@@ -102,26 +102,26 @@ def calculate_confidence(
         all_strong = all(s >= STRONG_MATCH_THRESHOLD for s in similarity_scores)
         retrieval_quality = weighted_mean * 1.08 if all_strong else weighted_mean
 
-    retrieval_quality = _clamp(retrieval_quality)
+    retrieval_quality = clamp(retrieval_quality)
 
     # Signal 2: Source Authority (weight 0.25)
     authority_scores = [
         DOC_TYPE_AUTHORITY.get(dt, DOC_TYPE_AUTHORITY["Other"]) for dt in doc_types
     ]
-    source_authority = _clamp(statistics.mean(authority_scores))
+    source_authority = clamp(statistics.mean(authority_scores))
 
     # Signal 3: Source Agreement (weight 0.20)
     # Low stdev = chunks are consistent = more trustworthy
     if n >= 2:
         score_stdev = statistics.stdev(similarity_scores)
-        source_agreement = _clamp(1.0 - (score_stdev / 0.30))
+        source_agreement = clamp(1.0 - (score_stdev / 0.30))
     else:
         source_agreement = 0.5
 
     # Signal 4: Coverage Bonus (weight 0.10)
     strong_chunks = sum(1 for s in similarity_scores if s >= STRONG_MATCH_THRESHOLD)
     coverage_ratio = min(strong_chunks / MIN_CHUNKS_FOR_COVERAGE, 1.0)
-    coverage_bonus = _clamp(coverage_ratio)
+    coverage_bonus = clamp(coverage_ratio)
 
     # Final score
 
@@ -131,9 +131,9 @@ def calculate_confidence(
         + 0.20 * source_agreement
         + 0.10 * coverage_bonus
     )
-    final_score = round(_clamp(final_score), 3)
+    final_score = round(clamp(final_score), 3)
 
-    review_required, review_reason = _should_review(
+    review_required, review_reason = should_review(
         score=final_score,
         top_score=top_score,
         doc_types=doc_types,
@@ -163,13 +163,13 @@ def calculate_confidence(
     )
 
 
-def _should_review(
+def should_review(
     score: float,
     top_score: float,
-    doc_types: list[str],
     threshold: float,
     strong_chunks: int,
     query: str,
+    doc_types: list[str] = None,
 ) -> tuple[bool, Optional[str]]:
     # Rule 1: Overall confidence too low
     if score < threshold:
@@ -197,5 +197,5 @@ def _should_review(
     return False, None
 
 
-def _clamp(value: float, lo: float = 0.0, hi: float = 1.0) -> float:
+def clamp(value: float, lo: float = 0.0, hi: float = 1.0) -> float:
     return max(lo, min(hi, value))

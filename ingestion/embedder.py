@@ -69,11 +69,13 @@ class EmbeddingManager:
 
     def embed_texts(self, texts: list[str]) -> list[list[float]]:
         """Embed and L2-normalize so cosine similarity = dot product."""
+        logger.info(f"Embedding {len(texts)} texts in EmbeddingManager.")
         vectors = self.get_model().embed_documents(texts)
         return [l2_normalize(v) for v in vectors]
 
     def embed_query(self, text: str) -> list[float]:
         """Embed a single query and L2-normalize."""
+        logger.info(f"Embedding query in EmbeddingManager: '{text}'")
         vector = self.get_model().embed_query(text)
         return l2_normalize(vector)
 
@@ -132,10 +134,14 @@ def query_collection(query_text: str, top_k: int = 6, metadata_filter=None) -> d
     distance → similarity: since space=cosine, ChromaDB returns
     distance = 1 - cosine_sim, so similarity = 1 - distance.
     """
+    logger.info(
+        f"Querying collection | query_text='{query_text}' | top_k={top_k} | metadata_filter={metadata_filter}"
+    )
     client = get_chroma_client()
     collection = get_collection(client)
 
     query_vector = embedding_manager.embed_query(query_text)
+    logger.info(f"Generated query vector for query_text='{query_text}'")
 
     where_filter = {"doc_type": metadata_filter} if metadata_filter else None
 
@@ -144,6 +150,10 @@ def query_collection(query_text: str, top_k: int = 6, metadata_filter=None) -> d
         n_results=top_k,
         where=where_filter,
         include=["documents", "metadatas", "distances"],
+    )
+
+    logger.info(
+        f"Query completed | retrieved {len(results.get('ids', [[]])[0])} documents"
     )
 
     # Convert distances → similarity scores in place
@@ -159,10 +169,13 @@ def query_collection(query_text: str, top_k: int = 6, metadata_filter=None) -> d
 
 
 def is_already_ingested(document_hash: str):
+    logger.info(f"Checking if document hash is already ingested: {document_hash}")
     records = get_all_document_records()
     for record in records:
         if record.get("document_hash") == document_hash:
+            logger.info(f"Document hash {document_hash} is already ingested.")
             return True
+    logger.info(f"Document hash {document_hash} is new (not ingested).")
     return False
 
 
@@ -181,13 +194,6 @@ def ingest_document(
         "chunk_count": 0,
         "error": None,
     }
-
-    # Idempotency check
-    # if is_already_ingested(parsed_doc.document_hash):
-    #     logger.info("Duplicate file skipped")
-    #     result["status"] = IndexingStatus.COMPLETED
-    #     result["error"] = "Duplicate document"
-    #     return result
 
     try:
         # Step 1: Parse
@@ -232,21 +238,35 @@ def ingest_document(
                 f"Partial ingestion | doc_id={doc_id} | stored={total_stored} | failed={total_failed}"
             )
 
-        logger.info("Building BM25 index")
-
-        all_chunks = collection.get(include=["documents", "metadatas"])
-
+        logger.info("Updating BM25 index with new chunks only")
         bm25 = BM25Manager()
+        loaded = bm25.load_index()
 
-        bm25.chunk_store = all_chunks["documents"]
-        bm25.metadata_store = all_chunks["metadatas"]
-        bm25.chunk_ids = all_chunks["ids"]
+        new_texts = [c.text for c in chunks]
+        new_ids = [c.chunk_id for c in chunks]
+        new_metas = [
+            {
+                "doc_id": c.doc_id,
+                "source_name": c.source_name,
+                "doc_type": c.doc_type,
+                "page_number": c.page_number,
+            }
+            for c in chunks
+        ]
 
-        bm25.build_index(all_chunks["documents"])
+        if loaded:
+            # Append to existing index data, then rebuild
+            bm25.chunk_store = bm25.chunk_store + new_texts
+            bm25.metadata_store = bm25.metadata_store + new_metas
+            bm25.chunk_ids = bm25.chunk_ids + new_ids
+        else:
+            bm25.chunk_store = new_texts
+            bm25.metadata_store = new_metas
+            bm25.chunk_ids = new_ids
 
+        bm25.build_index(bm25.chunk_store)
         bm25.save_index()
-
-        logger.info(f"BM25 rebuilt | chunks={len(all_chunks['documents'])}")
+        logger.info(f"BM25 updated | total_chunks={len(bm25.chunk_store)}")
 
         save_processed_record(doc_id, parsed_doc, total_stored)
         result["status"] = IndexingStatus.COMPLETED
@@ -274,6 +294,9 @@ def store_batch_with_retry(
     Embed and store one batch. Retries up to MAX_BATCH_RETRIES times on failure.
     Returns True if successful, False if all retries exhausted.
     """
+    logger.info(
+        f"Storing batch {batch_num}/{total_batches} for doc_id={doc_id} | batch_size={len(batch)}"
+    )
     for attempt in range(1, MAX_BATCH_RETRIES + 2):  # +2: initial + retries
         try:
             texts = [c.text for c in batch]
@@ -396,6 +419,7 @@ def delete_processed_record(doc_id: str) -> None:
 
 
 def get_all_document_records() -> list[dict]:
+    logger.info("Retrieving all document records from processed directory.")
     try:
         os.makedirs(PROCESSED_DIR, exist_ok=True)
         records = []

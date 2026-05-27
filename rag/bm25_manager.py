@@ -22,9 +22,8 @@ class BM25Manager:
         self.chunk_ids = []
 
     def tokenize(self, text):
-
         text = text.lower()
-        text = re.sub(r"[^\w\s/-]", " ", text)
+        text = re.sub(r"[^\w\s/\-.]", " ", text)
         return text.split()
 
     def build_index(self, chunks):

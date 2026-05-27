@@ -105,8 +105,8 @@ def chunk_document(parsed_doc: ParsedDocument, doc_id: str) -> list[DocumentChun
 
     try:
         splitter = RecursiveCharacterTextSplitter(
-            chunk_size=CHUNK_SIZE,  # see config.py — now 800 recommended
-            chunk_overlap=CHUNK_OVERLAP,  # now 120 recommended
+            chunk_size=CHUNK_SIZE,
+            chunk_overlap=CHUNK_OVERLAP,
             length_function=len,
             separators=[
                 # Legal structure markers (highest priority)
@@ -150,7 +150,6 @@ def chunk_document(parsed_doc: ParsedDocument, doc_id: str) -> list[DocumentChun
         for idx, chunk_text in enumerate(raw_chunks):
             detected_page = extract_page_number(chunk_text)
 
-
             if detected_page is not None:
                 last_seen_page = detected_page
 
@@ -162,8 +161,13 @@ def chunk_document(parsed_doc: ParsedDocument, doc_id: str) -> list[DocumentChun
             clean_text = extract_clean_text(chunk_text)
 
             if len(clean_text) < MIN_CHUNK_LENGTH:
+                if chunks:
+                    chunks[-1].text += " " + clean_text
+                    chunks[-1].token_estimate = estimate_tokens(chunks[-1].text)
+                    logger.debug(f"Merged short chunk into previous | idx={idx} | len={len(clean_text)}")
+                else:
+                    logger.debug(f"Discarded short chunk (no previous chunk to merge into) | idx={idx}")
                 skipped += 1
-                logger.debug(f"Skipped short chunk | idx={idx} | len={len(clean_text)}")
                 continue
 
             section_match = re.search(
@@ -173,9 +177,7 @@ def chunk_document(parsed_doc: ParsedDocument, doc_id: str) -> list[DocumentChun
             notification_match = re.search(
                 r"Notification\s+No\.?\s*([\w/-]+)", clean_text, re.IGNORECASE
             )
-            hs_code_match = re.search(
-                r"\b\d{2}\.\d{2}(?:\.\d{2}(?:\.\d{2})?)?\b|\b\d{4,8}\b", clean_text
-            )
+            hs_code_match = re.search(r"\b\d{4}\.\d{2}(?:\.\d{2})?\b", clean_text)
 
             chunks.append(
                 DocumentChunk(
