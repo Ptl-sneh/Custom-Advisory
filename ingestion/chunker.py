@@ -44,6 +44,7 @@ class DocumentChunk(BaseModel):
     chapter: Optional[str] = None
     notification: Optional[str] = None
     hs_code: Optional[str] = None
+    doc_name: Optional[str] = None
 
 
 def extract_page_number(text: str) -> Optional[int]:
@@ -189,6 +190,7 @@ def chunk_document(parsed_doc: ParsedDocument, doc_id: str) -> list[DocumentChun
                     token_estimate=estimate_tokens(clean_text),
                     page_number=page_number,
                     doc_type=parsed_doc.doc_type.value,
+                    doc_name=parsed_doc.doc_name,
                     source_name=parsed_doc.source_name,
                     issuing_authority=parsed_doc.issuing_authority,
                     issue_date=parsed_doc.issue_date,

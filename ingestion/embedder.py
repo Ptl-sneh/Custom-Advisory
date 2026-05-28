@@ -355,30 +355,6 @@ def store_batch_with_retry(
 # Document management
 
 
-def delete_document(doc_id: str) -> bool:
-    logger.info(f"Deleting document | doc_id={doc_id}")
-    try:
-        client = get_chroma_client()
-        collection = get_collection(client)
-
-        results = collection.get(where={"doc_id": doc_id})
-        if not results["ids"]:
-            logger.info(f"No chunks found | doc_id={doc_id}")
-            return False
-
-        collection.delete(ids=results["ids"])
-        delete_processed_record(doc_id)
-
-        logger.info(
-            f"Document deleted | doc_id={doc_id} | chunks_removed={len(results['ids'])}"
-        )
-        return True
-
-    except Exception as e:
-        logger.error(f"Delete failed | doc_id={doc_id} | error={str(e)}")
-        return False
-
-
 def save_processed_record(
     doc_id: str, parsed_doc: ParsedDocument, chunk_count: int
 ) -> None:
@@ -406,16 +382,6 @@ def save_processed_record(
         logger.debug(f"Record saved | doc_id={doc_id}")
     except Exception as e:
         logger.error(f"Record save failed | doc_id={doc_id} | error={str(e)}")
-
-
-def delete_processed_record(doc_id: str) -> None:
-    try:
-        record_path = Path(PROCESSED_DIR) / f"{doc_id}.json"
-        if record_path.exists():
-            record_path.unlink()
-            logger.debug(f"Record deleted | doc_id={doc_id}")
-    except Exception as e:
-        logger.error(f"Record delete failed | doc_id={doc_id} | error={str(e)}")
 
 
 def get_all_document_records() -> list[dict]:

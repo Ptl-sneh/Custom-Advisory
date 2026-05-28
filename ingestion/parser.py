@@ -33,6 +33,7 @@ class ParsedDocument(BaseModel):
     hs_code: Optional[str] = None
     customs_section: Optional[str] = None
     document_hash: str
+    document_name: Optional[str] = None
 
 
 def fingerprint(text: str) -> str:
@@ -370,6 +371,7 @@ def parse_document(file_path: str, metadata: dict) -> ParsedDocument:
         hs_code=metadata.get("hs_code"),
         customs_section=metadata.get("customs_section"),
         document_hash=doc_hash,
+        document_name=metadata.get("document_name"),
     )
 
     logger.info(

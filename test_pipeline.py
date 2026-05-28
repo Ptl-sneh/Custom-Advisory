@@ -2,7 +2,7 @@ from rag.retriever import retrieve
 from rag.chain import generate_advisory
 from schemas.advisory import AdvisoryQuery
 
-QUERY = "What is the standard rate of duty for customs tariff item 8517 62 90 as listed in the tariff schedule?"
+QUERY = ("How fast is porsche 911? What are the safety ratings and how does it compare to similar sports cars?")
 
 
 print("\n" + "=" * 80)

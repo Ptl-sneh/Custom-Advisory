@@ -147,34 +147,8 @@ def retrieve(
     """
     logger.info(f"Retrieval started | query_len={len(query)} | top_k={top_k}")
 
-    query_words = len(query.split())
-    if query_words <= 5:
-        top_k = 5
-    elif query_words <= 12:
-        top_k = 6
-    else:
-        top_k = 8
         
-    logger.info(f"Adjusted top_k based on query_words ({query_words}): {top_k}")
-
-    cross_doc = any(
-        word in query.lower()
-        for word in [
-            "difference",
-            "compare",
-            "confirm",
-            "referenced",
-            "both",
-            "discrepancy",
-        ]
-    )
-
-    if cross_doc:
-        top_k = max(
-            top_k,
-            12,
-        )
-        logger.info(f"Cross-document query detected. Adjusted top_k to {top_k}")
+    logger.info(f"Adjusted top_k based on query_words ({query}): {top_k}")
 
     try:
         # 1. Embed query
@@ -209,21 +183,13 @@ def retrieve(
         logger.info(f"ChromaDB returned {len(ids)} candidates")
         logger.info(f"Raw distances: {[round(d, 4) for d in distances]}")
 
-        # 3. FIX: Convert distance → similarity
-        # ChromaDB cosine space: distance = 1 - cosine_similarity
-        # Therefore: cosine_similarity = 1 - distance
-        # The original code used: 1 - (distance / 2)  ← WRONG
-        # That formula maps [0,2] → [0,1] but distances for normalized
-        # vectors are already in [0,1] for positive cosine similarities.
-        # Dividing by 2 was artificially halving the distance and
-        # inflating every score by roughly 15-20 points.
         similarities = [round(1.0 - d, 4) for d in distances]
 
         # BM25 retrieval
 
         bm25_results = bm25_manager.search(
             query,
-            top_k=20,
+            top_k=10,
         )
         logger.info(f"BM25 retrieval returned {len(bm25_results) if bm25_results else 0} results")
         bm25_scores = {}
